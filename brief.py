@@ -102,19 +102,40 @@ GRID
 HEADLINES (last 48h)
 {_format_news(headlines)}"""
 
-    try:
-        client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
-        response = client.messages.create(
-            model=config.ANTHROPIC_MODEL,
-            max_tokens=1500,
-            system=SYSTEM,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        text = "".join(
-            block.text for block in response.content if block.type == "text"
-        ).strip()
-        text = text.removeprefix("```json").removeprefix("```").removesuffix("```")
-        return json.loads(text.strip())
-    except Exception as exc:
-        log.warning("Brief generation failed: %s", exc)
-        return _fallback(market_data, headlines)
+    client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
+
+    # Two attempts. A truncated response is unparseable JSON, and asking
+    # again with a tighter instruction almost always fixes it.
+    for attempt in (1, 2):
+        try:
+            messages = [{"role": "user", "content": prompt}]
+            if attempt == 2:
+                messages[0]["content"] += (
+                    "\n\nKeep the whole response under 350 words so the JSON "
+                    "closes properly. Shorter bullets are fine."
+                )
+
+            response = client.messages.create(
+                model=config.ANTHROPIC_MODEL,
+                max_tokens=4000,
+                system=SYSTEM,
+                messages=messages,
+            )
+
+            if response.stop_reason == "max_tokens":
+                log.warning("Response hit the token ceiling (attempt %d)", attempt)
+                continue
+
+            text = "".join(
+                block.text for block in response.content if block.type == "text"
+            ).strip()
+            text = text.removeprefix("```json").removeprefix("```").removesuffix("```")
+            return json.loads(text.strip())
+
+        except json.JSONDecodeError as exc:
+            log.warning("Brief JSON malformed on attempt %d: %s", attempt, exc)
+        except Exception as exc:
+            log.warning("Brief generation failed: %s", exc)
+            break
+
+    return _fallback(market_data, headlines)
