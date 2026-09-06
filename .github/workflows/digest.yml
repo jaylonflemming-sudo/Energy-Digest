@@ -1,0 +1,45 @@
+name: Daily energy digest
+
+on:
+  schedule:
+    # 11:00 UTC — 6am Central in summer, 5am in winter.
+    # GitHub cron is UTC only, so this drifts an hour across DST.
+    - cron: "0 11 * * 1-5"
+  workflow_dispatch:        # lets you run it by hand from the Actions tab
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Build and send digest
+        env:
+          EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+        run: python main.py
+
+      - name: Publish the web version
+        run: |
+          git config user.name  "energy-digest"
+          git config user.email "actions@github.com"
+          git add docs
+          git diff --staged --quiet || git commit -m "Digest for $(date -u +%Y-%m-%d)"
+          git push
